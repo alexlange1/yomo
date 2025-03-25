@@ -5,6 +5,7 @@ import cohere
 import requests
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
+from urllib.parse import quote
 
 # === Load environment variables ===
 load_dotenv()
@@ -47,10 +48,13 @@ def embed_query(query):
 def search_supabase(query_embedding, top_k):
     # Properly escape and format the embedding array for PostgreSQL
     embedding_str = f"{{{','.join(str(x) for x in query_embedding)}}}"
+    
+    # URL encode the embedding string
+    encoded_embedding = quote(embedding_str)
 
     url = (
         f"{SUPABASE_URL}/rest/v1/sinclair_chunks"
-        f"?select=text,page,distance=embedding<->'{embedding_str}'"
+        f"?select=text,page,distance=embedding<->'{encoded_embedding}'"
         f"&order=distance.asc&limit={top_k}"
     )
 
