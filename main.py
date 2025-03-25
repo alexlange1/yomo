@@ -6,35 +6,31 @@ import requests
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
 
-# === Load env variables ===
+# === Load environment variables ===
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 COHERE_KEY = os.getenv("COHERE_API_KEY")
 co = cohere.Client(COHERE_KEY)
 
-# === FastAPI app setup ===
+# === FastAPI app ===
 app = FastAPI()
 
-# Optional: allow all origins for frontend connection
+# === Allow all CORS (you can restrict to Lovable domain later) ===
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Or restrict to your Lovable frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.get("/")
-def root():
-    return {"message": "Welcome to the Sinclair RAG API!"}
-
 # === Request schema ===
 class QuestionRequest(BaseModel):
     question: str
-    top_k: int = 5  # Number of context chunks to retrieve
+    top_k: int = 5
 
-# === Helper: Embed question ===
+# === Embed question ===
 def embed_query(query):
     response = co.embed(
         texts=[query],
@@ -43,33 +39,26 @@ def embed_query(query):
     )
     return response.embeddings[0]
 
-# === Helper: Query Supabase for similar chunks ===
+# === Search Supabase chunks using vector similarity ===
 def search_supabase(query_embedding, top_k):
     embedding_str = str(query_embedding).replace("[", "(").replace("]", ")")
 
-    sql = f"""
-        SELECT text, page, embedding <#> '{embedding_str}' AS distance
-        FROM sinclair_chunks
-        ORDER BY distance ASC
-        LIMIT {top_k};
-    """
+    url = f"{SUPABASE_URL}/rest/v1/sinclair_chunks?select=text,page,distance=embedding<->'{embedding_str}'&order=distance.asc&limit={top_k}"
 
-    res = requests.post(
-        f"{SUPABASE_URL}/rest/v1/rpc/execute_sql",
+    res = requests.get(
+        url,
         headers={
             "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={"sql": sql}
+            "Authorization": f"Bearer {SUPABASE_KEY}"
+        }
     )
 
     if res.status_code != 200:
-        raise Exception(f"Supabase error: {res.text}")
+        raise Exception(f"Supabase query error: {res.text}")
 
     return res.json()
 
-# === Helper: Generate answer with Cohere ===
+# === Generate answer using Cohere ===
 def generate_answer(question, context_chunks):
     context = "\n\n".join(
         [f"(Page {chunk['page']})\n{chunk['text']}" for chunk in context_chunks]
@@ -96,13 +85,21 @@ ANSWER:
 
     return response.text
 
-# === Route: POST /ask ===
+# === FastAPI route ===
 @app.post("/ask")
 def ask_question(request: QuestionRequest):
     try:
         query_embedding = embed_query(request.question)
         chunks = search_supabase(query_embedding, request.top_k)
         answer = generate_answer(request.question, chunks)
-        return {"answer": answer, "sources": [{"page": c["page"]} for c in chunks]}
+
+        # Optional: return source pages
+        sources = [{"page": c["page"], "text": c["text"][:120] + "..."} for c in chunks]
+
+        return {
+            "answer": answer,
+            "sources": sources
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
