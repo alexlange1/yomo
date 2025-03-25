@@ -45,8 +45,8 @@ def embed_query(query):
 
 # === Search Supabase chunks using vector similarity via REST API ===
 def search_supabase(query_embedding, top_k):
-    # Convert embedding to PostgreSQL-compatible array string
-    embedding_str = "{" + ",".join(map(str, query_embedding)) + "}"
+    # Properly escape and format the embedding array for PostgreSQL
+    embedding_str = f"{{{','.join(str(x) for x in query_embedding)}}}"
 
     url = (
         f"{SUPABASE_URL}/rest/v1/sinclair_chunks"
@@ -74,7 +74,7 @@ def generate_answer(question, context_chunks):
     )
 
     prompt = f"""
-You are a helpful and scientifically grounded AI trained on David Sinclair's research. Use the CONTEXT below to answer the QUESTION. When possible, cite the page number (e.g. “(Page 5)”) where the information comes from.
+You are a helpful and scientifically grounded AI trained on David Sinclair's research. Use the CONTEXT below to answer the QUESTION. When possible, cite the page number (e.g. "(Page 5)") where the information comes from.
 
 CONTEXT:
 {context}
