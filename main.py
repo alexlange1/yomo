@@ -46,23 +46,25 @@ def embed_query(query):
 
 # === Search Supabase chunks using vector similarity via REST API ===
 def search_supabase(query_embedding, top_k):
-    # Properly escape and format the embedding array for PostgreSQL
-    embedding_str = f"{{{','.join(str(x) for x in query_embedding)}}}"
+    # Convert embedding to list of floats
+    embedding_array = [float(x) for x in query_embedding]
     
-    # URL encode the embedding string
-    encoded_embedding = quote(embedding_str)
+    # Use Supabase RPC endpoint
+    url = f"{SUPABASE_URL}/rest/v1/rpc/match_chunks"
+    
+    # Request body for the RPC call
+    payload = {
+        "query_embedding": embedding_array,
+        "match_count": top_k
+    }
 
-    url = (
-        f"{SUPABASE_URL}/rest/v1/sinclair_chunks"
-        f"?select=text,page,distance=embedding<->'{encoded_embedding}'"
-        f"&order=distance.asc&limit={top_k}"
-    )
-
-    res = requests.get(
+    res = requests.post(
         url,
+        json=payload,
         headers={
             "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}"
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json"
         }
     )
 
