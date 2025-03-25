@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: sinclair-rag-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: ./start.sh
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: COHERE_API_KEY
+        sync: false
