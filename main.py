@@ -46,26 +46,26 @@ def embed_query(query):
 
 # === Search Supabase chunks using vector similarity via REST API ===
 def search_supabase(query_embedding, top_k):
-    # Convert embedding to list of floats and format as Postgres array
-    embedding_str = '[' + ','.join(str(x) for x in query_embedding) + ']'
+    url = f"{SUPABASE_URL}/rest/v1/sinclair_chunks"
+    
+    params = {
+        'select': 'text,page',
+        'order': 'embedding <-> embedding.cast(vector)',
+        'limit': str(top_k)
+    }
 
-    url = (
-        f"{SUPABASE_URL}/rest/v1/sinclair_chunks"
-        f"?select=text,page"
-        f"&order=embedding<->'%s'::vector"  # Use placeholder for the vector
-        f"&limit={top_k}"
-    )
-
-    # Insert the embedding array into the URL
-    url = url % embedding_str
+    # Add the vector as a header instead of a query parameter
+    headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}',
+        'Content-Type': 'application/json',
+        'embedding': f'[{",".join(str(x) for x in query_embedding)}]'
+    }
 
     res = requests.get(
         url,
-        headers={
-            "apikey": SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json"
-        }
+        params=params,
+        headers=headers
     )
 
     if res.status_code != 200:
