@@ -2,9 +2,9 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import os
 import cohere
+import requests
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from supabase import create_client, Client
 
 # === Load environment variables ===
 load_dotenv()
@@ -13,13 +13,10 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 COHERE_KEY = os.getenv("COHERE_API_KEY")
 co = cohere.Client(COHERE_KEY)
 
-# === Initialize Supabase client ===
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
 # === FastAPI app ===
 app = FastAPI()
 
-# === Allow all CORS (you can restrict to frontend domain later) ===
+# === Allow all CORS (adjust in production) ===
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -46,21 +43,29 @@ def embed_query(query):
     )
     return response.embeddings[0]
 
-# === Search Supabase chunks using vector similarity ===
+# === Search Supabase chunks using vector similarity via REST API ===
 def search_supabase(query_embedding, top_k):
-    query = f"""
-        SELECT text, page, embedding
-        FROM sinclair_chunks
-        ORDER BY embedding <#> ARRAY{query_embedding}
-        LIMIT {top_k};
-    """
+    # Format embedding as PostgreSQL-compatible array syntax
+    embedding_str = str(query_embedding).replace("[", "(").replace("]", ")")
 
-    response = supabase.rpc("sql", {"query": query}).execute()
+    url = (
+        f"{SUPABASE_URL}/rest/v1/sinclair_chunks"
+        f"?select=text,page,distance=embedding<->'{embedding_str}'"
+        f"&order=distance.asc&limit={top_k}"
+    )
 
-    if response.error:
-        raise Exception(f"Supabase RPC error: {response.error['message']}")
+    res = requests.get(
+        url,
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}"
+        }
+    )
 
-    return response.data
+    if res.status_code != 200:
+        raise Exception(f"Supabase query error: {res.text}")
+
+    return res.json()
 
 # === Generate answer using Cohere ===
 def generate_answer(question, context_chunks):
