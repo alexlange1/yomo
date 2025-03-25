@@ -45,8 +45,8 @@ def embed_query(query):
 
 # === Search Supabase chunks using vector similarity via REST API ===
 def search_supabase(query_embedding, top_k):
-    # Format embedding as PostgreSQL-compatible array syntax
-    embedding_str = str(query_embedding).replace("[", "(").replace("]", ")")
+    # Convert embedding to PostgreSQL-compatible array string
+    embedding_str = "{" + ",".join(map(str, query_embedding)) + "}"
 
     url = (
         f"{SUPABASE_URL}/rest/v1/sinclair_chunks"
