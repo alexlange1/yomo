@@ -4,22 +4,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict
 import os
 import hashlib
-import cohere
 import requests
 import json
 from dotenv import load_dotenv
+import cohere
 
 # === Load environment variables ===
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+CHUTES_URL = os.getenv("CHUTES_URL")
+CHUTES_API_KEY = os.getenv("CHUTES_API_KEY")
 COHERE_KEY = os.getenv("COHERE_API_KEY")
+
+# === Initialize Cohere client ===
 co = cohere.Client(COHERE_KEY)
 
 # === FastAPI app ===
 app = FastAPI()
 
-# === Allow all CORS (adjust for prod) ===
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,7 +34,7 @@ app.add_middleware(
 # === In-memory cache ===
 cache: Dict[str, Dict] = {}
 
-# === Pydantic schema ===
+# === Request schema ===
 class QuestionRequest(BaseModel):
     question: str
     top_k: int = 5
@@ -45,7 +48,7 @@ def root():
 def health_check():
     return {"status": "ok"}
 
-# === Embedding with Cohere ===
+# === Embedding via Cohere ===
 def embed_query(query):
     response = co.embed(
         texts=[query],
@@ -56,14 +59,8 @@ def embed_query(query):
 
 # === Supabase vector similarity search ===
 def search_supabase(query_embedding, doctor, top_k):
-    table = f"{doctor}_chunks"
-    url = f"{SUPABASE_URL}/rest/v1/{table}"
-
-    params = {
-        'select': 'text,page',
-        'order': f'embedding.<->.{json.dumps(query_embedding)}',
-        'limit': str(top_k)
-    }
+    function_name = f"match_{doctor}_chunks"
+    url = f"{SUPABASE_URL}/rest/v1/rpc/{function_name}"
 
     headers = {
         'apikey': SUPABASE_KEY,
@@ -71,14 +68,19 @@ def search_supabase(query_embedding, doctor, top_k):
         'Content-Type': 'application/json'
     }
 
-    res = requests.get(url, params=params, headers=headers)
+    payload = {
+        "query_embedding": query_embedding,
+        "match_count": top_k
+    }
+
+    res = requests.post(url, headers=headers, json=payload)
 
     if res.status_code != 200:
-        raise Exception(f"Supabase query error: {res.text}")
+        raise Exception(f"Supabase function error: {res.text}")
 
     return res.json()
 
-# === Generate answer using Cohere Command R ===
+# === DeepSeek-V3 via Chutes ===
 def generate_answer(question, context_chunks, doctor):
     context = "\n\n".join(
         [f"(Page {chunk['page']})\n{chunk['text']}" for chunk in context_chunks]
@@ -96,16 +98,28 @@ QUESTION:
 ANSWER:
 """
 
-    response = co.chat(
-        model="command-r-plus",
-        message=prompt,
-        temperature=0.3,
-        max_tokens=500
-    )
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {CHUTES_API_KEY}"
+    }
+    payload = {
+        "model": "deepseek-ai/DeepSeek-V3-0324",
+        "messages": [
+            {"role": "system", "content": "You are a helpful and expert doctor."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3,
+        "max_tokens": 500
+    }
 
-    return response.text
+    response = requests.post(CHUTES_URL, headers=headers, json=payload)
+    
+    if response.status_code != 200:
+        raise Exception(f"Chutes API error: {response.text}")
 
-# === Main POST endpoint ===
+    return response.json()["choices"][0]["message"]["content"]
+
+# === Ask endpoint ===
 @app.post("/ask")
 def ask_question(request: QuestionRequest):
     try:
