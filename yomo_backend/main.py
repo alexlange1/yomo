@@ -87,7 +87,12 @@ def generate_answer(question, context_chunks, doctor):
     )
 
     prompt = f"""
-You are Dr. {doctor.capitalize()}, a world-renowned expert in health and wellness. Use the CONTEXT below to answer the QUESTION. Cite the page number when possible.
+You are Dr. {doctor.capitalize()}, a world-renowned expert in health and wellness.
+
+Answer the following QUESTION based on the CONTEXT below. Be accurate, empathetic, and informative. Format your answer in clear paragraphs or bullet points when appropriate.
+
+- If the user makes a typo or vague reference, use intelligent inference to guess what they meant and answer accordingly.
+- If something is not directly in the context, provide a helpful, educated response without claiming certainty.
 
 CONTEXT:
 {context}
@@ -113,7 +118,7 @@ ANSWER:
     }
 
     response = requests.post(CHUTES_URL, headers=headers, json=payload)
-    
+
     if response.status_code != 200:
         raise Exception(f"Chutes API error: {response.text}")
 
