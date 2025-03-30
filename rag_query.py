@@ -1,25 +1,46 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 import os
 import cohere
 import requests
 from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Dict
+import hashlib
 
-# === Load API keys and project settings from .env ===
+# === Load environment variables ===
 load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 COHERE_KEY = os.getenv("COHERE_API_KEY")
-
-# === Initialize Cohere client ===
 co = cohere.Client(COHERE_KEY)
 
-# === Headers for Supabase requests ===
-headers = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type": "application/json"
-}
+# === FastAPI app ===
+app = FastAPI()
 
-# === Step 1: Embed the user question ===
+# === Allow all CORS (adjust in production) ===
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# === In-memory cache ===
+cache: Dict[str, Dict] = {}
+
+# === Request schema ===
+class QuestionRequest(BaseModel):
+    question: str
+    top_k: int = 5
+    doctor: str = "sinclair"
+
+@app.get("/")
+def root():
+    return {"message": "Welcome to the Doctor GPT RAG API!"}
+
+# === Embed question ===
 def embed_query(query):
     response = co.embed(
         texts=[query],
@@ -28,36 +49,38 @@ def embed_query(query):
     )
     return response.embeddings[0]
 
-# === Step 2: Query Supabase for similar chunks ===
-def search_supabase(query_embedding, top_k=5):
-    # SQL-safe array string for pgvector
-    embedding_str = str(query_embedding).replace("[", "(").replace("]", ")")
+# === Supabase query for similar chunks ===
+def search_supabase(query_embedding, doctor, top_k):
+    table = f"{doctor}_chunks"
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
 
-    sql = f"""
-        SELECT text, page, embedding <#> '{embedding_str}' AS distance
-        FROM sinclair_chunks
-        ORDER BY distance ASC
-        LIMIT {top_k};
-    """
+    params = {
+        'select': 'text,page',
+        'limit': str(top_k)
+    }
 
-    res = requests.post(
-        f"{SUPABASE_URL}/rest/v1/rpc/execute_sql",  # requires PostgREST or SQL function endpoint
-        headers=headers,
-        json={"sql": sql}
-    )
+    headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}',
+        'Content-Type': 'application/json',
+        'embedding': f'[{','.join(str(x) for x in query_embedding)}]'
+    }
+
+    res = requests.get(url, params=params, headers=headers)
 
     if res.status_code != 200:
-        raise Exception(f"Supabase query failed: {res.text}")
+        raise Exception(f"Supabase query error: {res.text}")
 
     return res.json()
 
-# === Step 3: Generate an answer using Cohere Command R+ ===
-def generate_answer(question, context_chunks):
-    # Add page numbers to each chunk
-    context = "\n\n".join([f"(Page {chunk['page']})\n{chunk['text']}" for chunk in context_chunks])
+# === Generate answer using Cohere ===
+def generate_answer(question, context_chunks, doctor):
+    context = "\n\n".join(
+        [f"(Page {chunk['page']})\n{chunk['text']}" for chunk in context_chunks]
+    )
 
     prompt = f"""
-You are a helpful and scientifically grounded AI trained on David Sinclair's research. Use the following CONTEXT to answer the QUESTION as clearly and accurately as possible.
+You are Dr. {doctor.capitalize()}, a world-renowned expert in health and wellness. Use the CONTEXT below to answer the QUESTION. Cite the page number when possible.
 
 CONTEXT:
 {context}
@@ -77,18 +100,32 @@ ANSWER:
 
     return response.text
 
-# === Main Function ===
-if __name__ == "__main__":
-    question = input("Ask something based on Sinclair’s research: ")
+# === POST route ===
+@app.post("/ask")
+def ask_question(request: QuestionRequest):
+    try:
+        # Cache key (hash of question + doctor)
+        key = hashlib.sha256(f"{request.doctor}|{request.question}".encode()).hexdigest()
+        if key in cache:
+            return cache[key]
 
-    print("🔎 Embedding your query...")
-    query_embedding = embed_query(question)
+        query_embedding = embed_query(request.question)
+        chunks = search_supabase(query_embedding, request.doctor, request.top_k)
+        answer = generate_answer(request.question, chunks, request.doctor)
 
-    print("📥 Searching for relevant context in Supabase...")
-    chunks = search_supabase(query_embedding)
+        sources = [{"page": c["page"], "text": c["text"][:120] + "..."} for c in chunks]
+        result = {"answer": answer, "sources": sources}
 
-    print("🤖 Generating answer with Cohere Command R+...")
-    answer = generate_answer(question, chunks)
+        # Save to cache
+        cache[key] = result
 
-    print("\n💬 Answer:\n")
-    print(answer)
+        # Save to log
+        with open("query_log.txt", "a") as log_file:
+            log_file.write(f"Doctor: {request.doctor}\n")
+            log_file.write(f"Q: {request.question}\n")
+            log_file.write(f"A: {answer}\n\n")
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
