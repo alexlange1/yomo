@@ -82,9 +82,7 @@ def search_supabase(query_embedding, doctor, top_k):
 
 # === DeepSeek-V3 via Chutes ===
 def generate_answer(question, context_chunks, doctor):
-    context = "\n\n".join(
-        [f"(Page {chunk['page']})\n{chunk['text']}" for chunk in context_chunks]
-    )
+    context = "\n\n".join([chunk["text"] for chunk in context_chunks])
 
     prompt = f"""
 You are Dr. {doctor.capitalize()}, a world-renowned expert in health and wellness.
@@ -136,7 +134,7 @@ def ask_question(request: QuestionRequest):
         chunks = search_supabase(query_embedding, request.doctor, request.top_k)
         answer = generate_answer(request.question, chunks, request.doctor)
 
-        sources = [{"page": c["page"], "text": c["text"][:120] + "..."} for c in chunks]
+        sources = [{"text": c["text"][:120] + "..."} for c in chunks]
         result = {"answer": answer, "sources": sources}
 
         cache[key] = result

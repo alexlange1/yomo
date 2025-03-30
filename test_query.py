@@ -1,7 +1,7 @@
 import requests
 
 response = requests.post(
-    "http://127.0.0.1:8000/ask",
+    "https://yomo-api.onrender.com/ask",  # ✅ Deployed Render URL
     headers={"Content-Type": "application/json"},
     json={
         "question": "What does David Sinclair think about NMN?",
@@ -10,4 +10,5 @@ response = requests.post(
     }
 )
 
+print(response.status_code)
 print(response.json())
