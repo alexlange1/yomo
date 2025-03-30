@@ -1,13 +1,15 @@
 services:
   - type: web
-    name: sinclair-rag-api
+    name: yomo-api
     env: python
-    buildCommand: pip install -r yomo_backend/requirements.txt
+    buildCommand: pip install -r requirements.txt
     startCommand: ./start.sh
     envVars:
       - key: SUPABASE_URL
-        sync: false
+        value: your-supabase-url
       - key: SUPABASE_SERVICE_ROLE_KEY
-        sync: false
-      - key: COHERE_API_KEY
-        sync: false
+        value: your-service-role-key
+      - key: CHUTES_URL
+        value: your-chutes-url
+      - key: CHUTES_API_KEY
+        value: your-chutes-api-key
